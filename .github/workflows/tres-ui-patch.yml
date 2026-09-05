@@ -1,0 +1,40 @@
+name: Patch TRES UI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'index.html'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          if 'tres-photo-upload-v1' in s:
+              raise SystemExit(0)
+          css = '''\n<style id="tres-photo-upload-v1">\n.status{text-transform:capitalize!important}\n.tres-photo-upload{margin-top:7px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}\n.tres-photo-upload input[type=file]{max-width:100%;font-size:12px}\n.tres-photo-upload .btn{padding:8px 10px}\n.tres-photo-upload small{color:var(--muted);font-size:11px}\n</style>\n'''
+          js = r'''\n<script id="tres-photo-upload-v1">\n(function(){\n  const BUCKET='tres-watch-photos';\n  function enhance(){\n    document.querySelectorAll('.field').forEach(field=>{\n      const label=field.querySelector('label');\n      if(!label || label.textContent.trim().toLowerCase()!=='photo url' || field.querySelector('.tres-photo-upload')) return;\n      const input=field.querySelector('input');\n      if(!input) return;\n      const wrap=document.createElement('div');\n      wrap.className='tres-photo-upload';\n      const file=document.createElement('input');\n      file.type='file'; file.accept='image/*';\n      const note=document.createElement('small');\n      note.textContent='Upload an image or paste a URL above.';\n      wrap.append(file,note);\n      field.appendChild(wrap);\n      file.addEventListener('change',async()=>{\n        const f=file.files && file.files[0];\n        if(!f) return;\n        if(f.size>10*1024*1024){ alert('Photo must be 10 MB or smaller.'); file.value=''; return; }\n        const ext=(f.name.split('.').pop()||'jpg').toLowerCase().replace(/[^a-z0-9]/g,'') || 'jpg';\n        const id=(crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+Math.random().toString(36).slice(2));\n        const path='watches/'+id+'.'+ext;\n        note.textContent='Uploading…';\n        try{\n          if(typeof supabaseClient==='undefined') throw new Error('Supabase client is not available.');\n          const {error}=await supabaseClient.storage.from(BUCKET).upload(path,f,{contentType:f.type||'image/jpeg',cacheControl:'31536000',upsert:false});\n          if(error) throw error;\n          const {data}=supabaseClient.storage.from(BUCKET).getPublicUrl(path);\n          input.value=data.publicUrl;\n          input.dispatchEvent(new Event('input',{bubbles:true}));\n          input.dispatchEvent(new Event('change',{bubbles:true}));\n          note.textContent='Uploaded ✓';\n        }catch(e){\n          console.error(e); note.textContent='Upload failed'; alert('Photo upload failed: '+(e.message||e));\n        }\n      });\n    });\n  }\n  enhance();\n  new MutationObserver(enhance).observe(document.body,{childList:true,subtree:true});\n})();\n</script>\n'''
+          s=s.replace('</head>',css+'</head>',1)
+          s=s.replace('</body>',js+'</body>',1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Commit patched index
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'Patch TRES photo upload and status labels'
+          git push
