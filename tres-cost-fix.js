@@ -1,0 +1,22 @@
+(function(){if(window.__tresCostFix)return;window.__tresCostFix=1;
+const E=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+const M=n=>'₱'+Number(n||0).toLocaleString('en-PH',{maximumFractionDigits:0});
+const D=d=>{let m=String(d||'').slice(0,10).match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?`${m[2]}/${m[3]}/${m[1]}`:String(d||'—')};
+const acq=c=>['purchase','acquisition','buy','trade','trade-in','trade in'].includes(String(c.type||'').trim().toLowerCase());
+function renderCostFix(){
+ const w=db.watches.find(x=>x.id===currentWatch);if(!w)return;
+ const cs=Array.isArray(w.costs)?w.costs:[],a=cs.filter(acq).reduce((x,c)=>x+Number(c.value||0),0),t=cs.reduce((x,c)=>x+(String(c.type||'').toLowerCase()==='selling expense'?0:Number(c.value||0)),0),add=t-a;
+ const old=document.querySelector('#profile .tres-cost-fix');if(old)old.remove();
+ const box=document.createElement('div');box.className='tres-cost-fix';box.innerHTML=`<div><small>Acquisition cost</small><b>${M(a)}</b></div><div><small>Additional costs</small><b>${M(add)}</b></div><div><small>Total cost</small><b>${M(t)}</b></div>`;
+ const p=document.getElementById('profile');const h=[...p.querySelectorAll('h3')].find(x=>x.textContent.trim().toLowerCase()==='cost history'||x.textContent.trim().toLowerCase()==='costing & history');
+ if(h){const sec=h.closest('.sectionbar')||h.parentElement;sec.insertAdjacentElement('afterend',box);}
+ if(!p.querySelector('[data-action="edit-watch"]')){const heads=p.querySelectorAll('.pagehead');if(heads.length){const b=document.createElement('button');b.className='btn primary';b.textContent='Edit watch';b.dataset.action='edit-watch';b.dataset.id=w.id;heads[0].appendChild(b)}}
+ const rows=[...p.querySelectorAll('.history-item')];let costIndex=0;
+ rows.forEach(r=>{const type=(r.querySelector('.history-type')?.textContent||'').trim().toLowerCase();if(['sale','trade out'].includes(type))return;const c=cs[costIndex++];if(!c)return;if(r.querySelector('.tres-cost-actions'))return;const wrap=document.createElement('div');wrap.className='tres-cost-actions';wrap.innerHTML=`<button class="btn tres-mini" data-tres-edit="${costIndex-1}">Edit</button><button class="btn tres-mini tres-danger" data-tres-del="${costIndex-1}">Delete</button>`;r.appendChild(wrap)});
+}
+function editCost(i){const w=db.watches.find(x=>x.id===currentWatch),c=w?.costs?.[i];if(!c)return;openModal(`<div><div class="muted">${E(w.id)}</div><h2>Edit cost</h2></div>`,`<div class="formgrid">${field('Date','xf_d','','date')}${field('Expense Type','xf_t','')}${field('Amount','xf_a','0','number')}${field('Notes','xf_n','Optional')}</div>`,`<button class="btn" data-action="close">Cancel</button><button class="btn primary" id="xf_save">Save changes</button>`);f_xf_d.value=c.date||today();f_xf_t.value=c.type||'Other';f_xf_a.value=c.value||0;f_xf_n.value=c.notes||'';xf_save.onclick=async()=>{c.date=xf_d.value||today();c.type=xf_t.value.trim()||'Other';c.value=Number(xf_a.value||0);c.notes=xf_n.value.trim();await save();closeModal();toast('Cost updated.');renderProfile()}}
+document.addEventListener('click',async e=>{let b=e.target.closest('[data-tres-edit]');if(b){e.preventDefault();e.stopPropagation();editCost(+b.dataset.tresEdit);return}b=e.target.closest('[data-tres-del]');if(b){e.preventDefault();e.stopPropagation();let w=db.watches.find(x=>x.id===currentWatch),i=+b.dataset.tresDel;if(w?.costs?.[i]&&!confirm('Delete this cost entry?'))return;if(w?.costs?.[i]){w.costs.splice(i,1);await save();toast('Cost deleted.');renderProfile()}}},true);
+const st=document.createElement('style');st.textContent='.tres-cost-fix{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 14px}.tres-cost-fix>div{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow)}.tres-cost-fix small{display:block;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;font-size:9px}.tres-cost-fix b{display:block;font-size:21px;margin-top:4px}.tres-cost-actions{display:flex;gap:5px;margin-left:10px}.tres-mini{padding:5px 8px;font-size:11px}.tres-danger{color:var(--red)}@media(max-width:720px){.tres-cost-fix{grid-template-columns:1fr}.tres-cost-actions{grid-column:1/-1;margin-left:0}}';document.head.appendChild(st);
+const old=window.renderProfile;window.renderProfile=function(){old();setTimeout(renderCostFix,0)};
+if(current==='profile')setTimeout(renderCostFix,0);
+})();
