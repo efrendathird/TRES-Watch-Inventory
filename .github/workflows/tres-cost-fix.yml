@@ -1,0 +1,32 @@
+name: Fix TRES Cost History
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'index.html'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch profile costing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          marker='__tresProfileCostFixV2'
+          if marker in s:
+              raise SystemExit(0)
+          patch_b64='''KGZ1bmN0aW9uKCl7CiAgaWYod2luZG93Ll9fdHJlc1Byb2ZpbGVDb3N0Rml4VjIpIHJldHVybjsKICB3aW5kb3cuX19fVHJlc1Byb2ZpbGVDb3N0Rml4VjI9dHJ1ZTsK
+          '''
+          # placeholder replaced below
+          PY
