@@ -1,0 +1,39 @@
+name: Fix TRES Functionality
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'index.html'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch functionality
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          marker='tres-functional-fix-v1'
+          if marker in s:
+              raise SystemExit(0)
+          js=r'''\n<script id="tres-functional-fix-v1">\n(function(){\n  if(window.__tresFunctionalFixV1)return;\n  window.__tresFunctionalFixV1=true;\n\n  // Make opening-funds persistence transactional: never close/report success until Supabase confirms the write.\n  window.saveOpeningFunds=async function(){\n    try{\n      db.settings=db.settings||{};\n      const input=document.getElementById('f_of');\n      if(!input) return toast('Opening funds form is unavailable.');\n      const raw=input.value;\n      if(raw==='' || !Number.isFinite(Number(raw)) || Number(raw)<0) return toast('Enter a valid opening funds amount.');\n      const v=Math.max(0,Number(raw));\n      db.settings.openingFunds=v;\n      const ok=await save();\n      if(!ok) return;\n      closeModal();\n      toast('Opening funds updated.');\n      if(typeof renderAnalytics==='function')renderAnalytics();\n      if(typeof renderReports==='function' && document.getElementById('reports')?.style.display!=='none')renderReports();\n    }catch(e){\n      console.error('Opening funds save failed',e);\n      toast('Could not save opening funds.');\n    }\n  };\n\n  // Reports should show the business cash starting point and current lifetime funds, with one obvious edit control.\n  const _reports=window.renderReports;\n  if(typeof _reports==='function'){\n    window.renderReports=function(){\n      _reports();\n      const el=document.getElementById('reports');\n      if(!el || el.querySelector('.tres-reports-funds'))return;\n      const opening=Number(db?.settings?.openingFunds||0);\n      let allSales=0,allTrades=0;\n      (typeof txRows==='function'?txRows():[]).forEach(x=>{\n        if(x.type==='SALE')allSales+=Number(x.amount||0);\n        if(x.type==='TRADE'){const w=db.watches.find(y=>y.id===x.id);allTrades+=Number(w?.trade?.cash||0);}\n      });\n      const watchCash=(db.watches||[]).flatMap(w=>w.costs||[]).filter(c=>!['trade','trade-in'].includes(String(c.type||'').toLowerCase())).reduce((a,c)=>a+Number(c.value||0),0);\n      const opex=(db.opex||[]).reduce((a,x)=>a+Number(x.amount||0),0);\n      const other=(db.otherCosts||[]).reduce((a,x)=>a+Number(x.amount||0),0);\n      const capex=(db.capex||[]).reduce((a,x)=>a+Number(x.cost||0),0);\n      const selling=(db.watches||[]).reduce((a,w)=>a+Number(w.sale?.expense||0),0);\n      const fin=(db.funding||[]).filter(x=>String(x.direction||'IN')==='IN').reduce((a,x)=>a+Number(x.amount||0),0);\n      const fout=(db.funding||[]).filter(x=>String(x.direction||'IN')==='OUT').reduce((a,x)=>a+Number(x.amount||0),0);\n      const available=opening+fin+allSales+allTrades-watchCash-opex-other-capex-selling-fout;\n      const box=document.createElement('div');\n      box.className='panel tres-reports-funds';\n      box.style.marginBottom='14px';\n      box.innerHTML=`<div class="sectionbar" style="margin:0 0 12px"><div><div class="eyebrow">BUSINESS CASH POSITION</div><h3 style="margin:3px 0 0">Opening funds & available cash</h3></div><button class="btn primary" data-action="set-opening-funds">${opening?'Edit opening funds':'Set opening funds'}</button></div><div class="metrics"><div class="metric"><small>Opening funds</small><b>${money(opening)}</b></div><div class="metric"><small>Funding net</small><b>${money(fin-fout)}</b></div><div class="metric"><small>Available funds</small><b>${money(available)}</b></div></div><div class="notice">Available funds uses lifetime recorded cash activity, so it does not change when you switch an Analytics date range.</div>`;\n      const grid=el.querySelector('.report-grid');\n      if(grid)el.insertBefore(box,grid);\n      else el.insertBefore(box,el.firstChild);\n    };\n  }\n\n  // Export All: include Capital & Funding in the CSV set as well.\n  const _handlerMarker='tres-export-all-funding-v1';\n  if(!_handlerMarker || window.__tresExportAllFundingV1)return;\n  window.__tresExportAllFundingV1=true;\n  document.addEventListener('click',function(e){\n    const a=e.target.closest('[data-action="export-all"]');\n    if(!a)return;\n    e.preventDefault();\n    e.stopImmediatePropagation();\n    ['inventory','exits','opex','capex','other','funding'].forEach((k,i)=>setTimeout(()=>doExport(k),i*180));\n    setTimeout(()=>downloadFile('tres_backup.json',JSON.stringify(db,null,2),'application/json'),1100);\n  },true);\n\n})();\n</script>\n'''
+          s=s.replace('</body>',js+'</body>',1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Commit patched index
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'Fix TRES opening funds and report actions'
+          git push
