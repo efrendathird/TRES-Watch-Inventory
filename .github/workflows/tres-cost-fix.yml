@@ -16,17 +16,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch profile costing
+      - name: Inject cost fix
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import base64
           p=Path('index.html')
           s=p.read_text(encoding='utf-8')
-          marker='__tresProfileCostFixV2'
-          if marker in s:
+          if '__tresCostFix' in s:
               raise SystemExit(0)
-          patch_b64='''KGZ1bmN0aW9uKCl7CiAgaWYod2luZG93Ll9fdHJlc1Byb2ZpbGVDb3N0Rml4VjIpIHJldHVybjsKICB3aW5kb3cuX19fVHJlc1Byb2ZpbGVDb3N0Rml4VjI9dHJ1ZTsK
-          '''
-          # placeholder replaced below
+          js=Path('tres-cost-fix.js').read_text(encoding='utf-8')
+          s=s.replace('</body>', '<script id="tres-cost-fix-v1">'+js+'</script></body>', 1)
+          p.write_text(s,encoding='utf-8')
           PY
+      - name: Commit patched index
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'Restore watch cost summary and editing'
+          git push
