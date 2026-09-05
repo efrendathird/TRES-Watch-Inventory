@@ -1,0 +1,45 @@
+name: Fix TRES Cost UI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'index.html'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean up cost UI and harden actions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          marker='tres-cost-ui-cleanup-v2'
+          if marker in s:
+              raise SystemExit(0)
+
+          # Remove the buggy injected cost patch that replaced the original profile layout.
+          s=re.sub(r'\\s*<script id="tres-cost-fix-v1">.*?</script>', '', s, count=1, flags=re.S)
+
+          # Restore the original, correct profile rendering and add lightweight Edit/Delete controls.
+          js = r'''\n<script id="tres-cost-ui-cleanup-v2">\n(function(){\n  function currentWatch(){\n    return db.watches.find(x=>x.id===currentWatchIdSafe());\n  }\n  function currentWatchIdSafe(){\n    try{return currentWatch;}catch(e){return window.currentWatch;}\n  }\n  function addCostControls(){\n    const w=currentWatch();\n    const p=document.getElementById('profile');\n    if(!w||!p)return;\n    const items=[...p.querySelectorAll('.cost-item')];\n    items.forEach((item,i)=>{\n      if(item.querySelector('.tres-cost-actions'))return;\n      const actions=document.createElement('span');\n      actions.className='tres-cost-actions';\n      actions.innerHTML='<button type="button" class="btn tres-mini" data-tres-cost-edit="'+i+'">Edit</button><button type="button" class="btn tres-mini tres-danger" data-tres-cost-delete="'+i+'">Delete</button>';\n      item.appendChild(actions);\n    });\n  }\n  function openEditCost(index){\n    const w=currentWatch(), c=w?.costs?.[index];\n    if(!c)return;\n    modal('Edit cost',\n      '<div class="formgrid">'+\n      field('ec_date','Date',c.date||today(),'date')+\n      field('ec_type','Type',c.type||'Cost','text')+\n      field('ec_amount','Amount',c.amount||0,'number')+\n      '<div class="field full"><label>Notes</label><textarea id="f_ec_notes">'+esc(c.notes||'')+'</textarea></div>'+\n      '</div>',\n      '<button class="btn" data-action="close">Cancel</button><button class="btn primary" data-action="save-cost-edit" data-index="'+index+'">Save changes</button>'\n    );\n  }\n  async function saveCostEdit(index){\n    const w=currentWatch(), c=w?.costs?.[index];\n    if(!c)return;\n    const get=id=>document.getElementById(id)?.value?.trim()||'';\n    c.date=get('f_ec_date')||today();\n    c.type=get('f_ec_type')||'Cost';\n    c.amount=Number(get('f_ec_amount')||0);\n    c.notes=document.getElementById('f_ec_notes')?.value||'';\n    try{await save();closeModal();renderProfile();toast('Cost updated.')}catch(e){console.error(e);toast('Could not save cost.')}\n  }\n  async function deleteCost(index){\n    const w=currentWatch();\n    if(!w?.costs?.[index])return;\n    if(!confirm('Delete this cost entry?'))return;\n    w.costs.splice(index,1);\n    try{await save();renderProfile();toast('Cost deleted.')}catch(e){console.error(e);toast('Could not delete cost.')}\n  }\n  document.addEventListener('click',e=>{\n    const ed=e.target.closest('[data-tres-cost-edit]');\n    if(ed){e.preventDefault();e.stopPropagation();openEditCost(Number(ed.dataset.tresCostEdit));return;}\n    const del=e.target.closest('[data-tres-cost-delete]');\n    if(del){e.preventDefault();e.stopPropagation();deleteCost(Number(del.dataset.tresCostDelete));return;}\n    const saveBtn=e.target.closest('[data-action="save-cost-edit"]');\n    if(saveBtn){e.preventDefault();e.stopPropagation();saveCostEdit(Number(saveBtn.dataset.index));return;}\n  },true);\n  const oldRenderProfile=renderProfile;\n  renderProfile=function(){oldRenderProfile();setTimeout(addCostControls,0)};\n  setTimeout(addCostControls,0);\n\n  // Harden opening-funds persistence: only close after Supabase confirms the save.\n  const originalSaveOpeningFunds=saveOpeningFunds;\n  saveOpeningFunds=async function(){\n    const input=document.getElementById('openingFunds');\n    if(!input)return;\n    db.settings.openingFunds=Number(input.value||0);\n    try{await save();closeModal();render();toast('Opening funds saved.')}catch(e){console.error(e);toast('Could not save opening funds.')}\n  };\n\n  // Export All should include the funding ledger as well as the other CSVs and JSON backup.\n  document.addEventListener('click',e=>{\n    const a=e.target.closest('[data-action="export-all"]');\n    if(!a)return;\n    e.preventDefault();e.stopPropagation();\n    ['inventory','exits','opex','capex','other','funding'].forEach((k,i)=>setTimeout(()=>doExport(k),i*160));\n    setTimeout(()=>downloadFile('tres_backup.json',JSON.stringify(db,null,2),'application/json'),1050);\n  },true);\n\n  const st=document.createElement('style');\n  st.textContent='.tres-cost-actions{display:flex;gap:6px;justify-content:flex-end;align-items:center;margin-left:12px}.tres-mini{padding:5px 8px;font-size:11px}.tres-danger{color:var(--red)}.cost-item{grid-template-columns:minmax(0,1fr) auto}.cost-item .tres-cost-actions{grid-column:2;white-space:nowrap}@media(max-width:720px){.tres-cost-actions{grid-column:1/-1!important;justify-content:flex-start;margin-left:0;margin-top:5px}}';\n  document.head.appendChild(st);\n})();\n</script>\n'''
+          s=s.replace('</body>', js+'</body>',1)
+          p.write_text(s,encoding='utf-8')
+          PY
+      - name: Commit patched index
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m 'Restore original cost history UI and actions'
+          git push
